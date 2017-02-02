@@ -21,9 +21,13 @@ class PostgresToRedshift
     end
 
     def name
-      attributes["table_name"]
+      attributes['table_name']
     end
     alias_method :to_s, :name
+
+    def schema
+      attributes['table_schema']
+    end
 
     def target_table_name
       name.gsub(/_view$/, '')

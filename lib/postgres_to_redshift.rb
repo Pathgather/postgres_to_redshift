@@ -22,7 +22,9 @@ class PostgresToRedshift
     update_tables = PostgresToRedshift.new
 
     update_tables.tables.each do |table|
-      target_connection.exec("CREATE TABLE IF NOT EXISTS public.#{target_connection.quote_ident(table.target_table_name)} (#{table.columns_for_create})")
+      target_connection.exec("CREATE SCHEMA IF NOT EXISTS #{target_connection.quote_ident(table.schema)}")
+      p "CREATE TABLE IF NOT EXISTS #{target_connection.quote_ident(table.schema)}.#{target_connection.quote_ident(table.target_table_name)} (#{table.columns_for_create})"
+      target_connection.exec("CREATE TABLE IF NOT EXISTS #{target_connection.quote_ident(table.schema)}.#{target_connection.quote_ident(table.target_table_name)} (#{table.columns_for_create})")
 
       update_tables.copy_table(table)
 
@@ -64,8 +66,10 @@ class PostgresToRedshift
   end
 
   def tables
-    source_connection.exec("SELECT * FROM information_schema.tables WHERE table_schema = 'public' AND table_type in ('BASE TABLE', 'VIEW')").map do |table_attributes|
+    source_connection.exec("SELECT * FROM information_schema.tables WHERE table_type in ('BASE TABLE', 'VIEW')").map do |table_attributes|
       table = Table.new(attributes: table_attributes)
+      next if table.schema =~ /^pg_/
+      next if table.schema == "information_schema"
       next if table.name =~ /^pg_/
       table.columns = column_definitions(table)
       table
@@ -73,7 +77,7 @@ class PostgresToRedshift
   end
 
   def column_definitions(table)
-    source_connection.exec("SELECT * FROM information_schema.columns WHERE table_schema='public' AND table_name='#{table.name}' order by ordinal_position")
+    source_connection.exec("SELECT * FROM information_schema.columns WHERE table_schema='#{table.schema}' AND table_name='#{table.name}' order by ordinal_position")
   end
 
   def s3
@@ -89,10 +93,10 @@ class PostgresToRedshift
     zip = Zlib::GzipWriter.new(tmpfile)
     chunksize = 5 * GIGABYTE # uncompressed
     chunk = 1
-    bucket.objects.with_prefix("export/#{table.target_table_name}.psv.gz").delete_all
+    bucket.objects.with_prefix("export/#{table.schema}_#{table.target_table_name}.psv.gz").delete_all
     begin
-      puts "Downloading #{table}"
-      copy_command = "COPY (SELECT #{table.columns_for_copy} FROM #{table.name}) TO STDOUT WITH DELIMITER '|'"
+      puts "Downloading #{table.schema}.#{table}"
+      copy_command = "COPY (SELECT #{table.columns_for_copy} FROM #{table.schema}.#{table.name}) TO STDOUT WITH DELIMITER '|'"
 
       source_connection.copy_data(copy_command) do
         while row = source_connection.get_copy_data
@@ -120,22 +124,22 @@ class PostgresToRedshift
   end
 
   def upload_table(table, buffer, chunk)
-    puts "Uploading #{table.target_table_name}.#{chunk}"
-    bucket.objects["export/#{table.target_table_name}.psv.gz.#{chunk}"].write(buffer, acl: :authenticated_read)
+    puts "Uploading #{table.schema}.#{table.target_table_name}.#{chunk}"
+    bucket.objects["export/#{table.schema}_#{table.target_table_name}.psv.gz.#{chunk}"].write(buffer, acl: :authenticated_read)
   end
 
   def import_table(table)
-    puts "Importing #{table.target_table_name}"
-    target_connection.exec("DROP TABLE IF EXISTS public.#{table.target_table_name}_updating")
+    puts "Importing #{table.schema}.#{table.target_table_name}"
+    target_connection.exec("DROP TABLE IF EXISTS #{table.schema}.#{table.target_table_name}_updating")
 
     begin
       target_connection.exec('BEGIN;')
 
-      target_connection.exec("ALTER TABLE public.#{target_connection.quote_ident(table.target_table_name)} RENAME TO #{table.target_table_name}_updating")
+      target_connection.exec("ALTER TABLE #{target_connection.quote_ident(table.schema)}.#{target_connection.quote_ident(table.target_table_name)} RENAME TO #{table.target_table_name}_updating")
 
-      target_connection.exec("CREATE TABLE public.#{target_connection.quote_ident(table.target_table_name)} (#{table.columns_for_create})")
+      target_connection.exec("CREATE TABLE #{target_connection.quote_ident(table.schema)}.#{target_connection.quote_ident(table.target_table_name)} (#{table.columns_for_create})")
 
-      target_connection.exec("COPY public.#{target_connection.quote_ident(table.target_table_name)} FROM 's3://#{ENV['S3_DATABASE_EXPORT_BUCKET']}/export/#{table.target_table_name}.psv.gz' CREDENTIALS 'aws_access_key_id=#{ENV['S3_DATABASE_EXPORT_ID']};aws_secret_access_key=#{ENV['S3_DATABASE_EXPORT_KEY']}' GZIP TRUNCATECOLUMNS ESCAPE DELIMITER as '|';")
+      target_connection.exec("COPY #{target_connection.quote_ident(table.schema)}.#{target_connection.quote_ident(table.target_table_name)} FROM 's3://#{ENV['S3_DATABASE_EXPORT_BUCKET']}/export/#{table.schema}_#{table.target_table_name}.psv.gz' CREDENTIALS 'aws_access_key_id=#{ENV['S3_DATABASE_EXPORT_ID']};aws_secret_access_key=#{ENV['S3_DATABASE_EXPORT_KEY']}' GZIP TRUNCATECOLUMNS ESCAPE DELIMITER as '|';")
 
       target_connection.exec('COMMIT;')
 
@@ -153,7 +157,7 @@ class PostgresToRedshift
       print_last_redshift_loading_error
 
       if !ENV['WARN_ON_LOADING_ERROR'].nil? && ENV['WARN_ON_LOADING_ERROR'].casecmp('true') == 0
-        puts "\nINFO:  Skipping '#{table.name}' and continuing on."
+        puts "\nINFO:  Skipping '#{table.schema}.#{table.name}' and continuing on."
       else
         exit
       end
