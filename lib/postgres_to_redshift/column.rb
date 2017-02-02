@@ -46,19 +46,21 @@
 class PostgresToRedshift::Column
   attr_accessor :attributes
 
+  # HELPFUL LIST OF CONVERSIONS
+  # https://gist.github.com/wrobstory/4b0ce4e8ba51ec40c494881bc126c003
   CAST_TYPES_FOR_COPY = {
-    "text" => "CHARACTER VARYING(65535)",
-    "uuid" => "CHAR(36)",
-    "json" => "CHARACTER VARYING(65535)",
-    "tsvector" => "CHARACTER VARYING(65535)",
-    "citext" => "CHARACTER VARYING(65535)",
-    "jsonb" => "CHARACTER VARYING(65535)",
-    "interval" => "VARCHAR(128)",
+    "ARRAY" => "CHARACTER VARYING(65535)",
     "bytea" => "CHARACTER VARYING(65535)",
+    "citext" => "CHARACTER VARYING(65535)",
+    "interval" => "VARCHAR(128)",
+    "json" => "CHARACTER VARYING(65535)",
+    "jsonb" => "CHARACTER VARYING(65535)",
     "money" => "DECIMAL(19,2)",
     "oid" => "CHARACTER VARYING(65535)",
-    "ARRAY" => "CHARACTER VARYING(65535)",
+    "text" => "CHARACTER VARYING(65535)",
+    "tsvector" => "CHARACTER VARYING(65535)",
     "USER-DEFINED" => "CHARACTER VARYING(65535)",
+    "uuid" => "CHAR(36)",
   }
 
   def initialize(attributes: )
